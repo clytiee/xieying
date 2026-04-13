@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "元素图文·撷英｜精准截图页面元素（支持长图）",
+  "version": "1.0",
+  "description": "点击图标后选择页面元素，复制或下载截图",
+  "permissions": ["activeTab", "scripting", "clipboardWrite"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "撷英：选择元素截图，支持长图",
+	"default_icon": {
+		"48": "icon48.png"
+	}
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png"
+  }
+}
