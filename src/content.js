@@ -1,178 +1,27 @@
-// 元素截图工具 - 页面内脚本（带调试日志）
+// 元素截图工具 - 页面内脚本
 let selectionModeActive = false;
 let hoverHighlightDiv = null;
 let currentHoverElement = null;
 let popupMenu = null;
 let isMenuOpen = false;
+let selectedElement = null; // 存储当前选中的元素
 
-console.log("=== [DEBUG] 元素截图工具 content script 开始加载 ===");
-console.log("[DEBUG] 当前页面URL:", window.location.href);
-console.log("[DEBUG] 页面尺寸:", window.innerWidth, "x", window.innerHeight);
+console.log("=== 元素截图工具 content script 开始加载 ===");
 
 // 通知 background script 脚本已就绪
 try {
   chrome.runtime.sendMessage({ 
     action: "contentScriptReady", 
-    ready: true,
-    url: window.location.href
-  }).catch(err => console.log("[DEBUG] 发送就绪消息失败:", err));
-  console.log("[DEBUG] 已发送就绪消息到 background");
+    ready: true 
+  }).catch(err => console.log("发送就绪消息失败:", err));
 } catch(e) {
-  console.log("[DEBUG] 发送就绪消息异常:", e);
-}
-
-// ========== 获取元素的实际滚动容器 ==========
-function getScrollContainer(element) {
-  console.log("[DEBUG] getScrollContainer 被调用，元素:", element.tagName, element.className);
-  let parent = element.parentElement;
-  let depth = 0;
-  while (parent && parent !== document.body && parent !== document.documentElement && depth < 20) {
-    const style = getComputedStyle(parent);
-    const overflow = style.overflow + style.overflowY + style.overflowX;
-    console.log(`[DEBUG] 检查父元素 ${depth}:`, parent.tagName, parent.className, "overflow:", overflow);
-    if (/(auto|scroll)/.test(overflow)) {
-      console.log("[DEBUG] 找到滚动容器:", parent.tagName, parent.className);
-      return parent;
-    }
-    parent = parent.parentElement;
-    depth++;
-  }
-  console.log("[DEBUG] 未找到滚动容器，使用 window");
-  return window;
-}
-
-// ========== 获取元素相对于滚动容器的位置 ==========
-function getPositionRelativeToScrollContainer(element) {
-  console.log("[DEBUG] getPositionRelativeToScrollContainer 被调用");
-  const scrollContainer = getScrollContainer(element);
-  const rect = element.getBoundingClientRect();
-  console.log("[DEBUG] 元素 getBoundingClientRect:", {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height,
-    right: rect.right,
-    bottom: rect.bottom
-  });
-  
-  if (scrollContainer === window) {
-    const result = {
-      left: rect.left + window.scrollX,
-      top: rect.top + window.scrollY,
-      width: rect.width,
-      height: rect.height,
-      scrollContainer: 'window',
-      scrollTop: window.scrollY,
-      clientTop: 0,
-      containerInfo: 'window'
-    };
-    console.log("[DEBUG] 使用 window 滚动，结果:", result);
-    return result;
-  } else {
-    const containerRect = scrollContainer.getBoundingClientRect();
-    console.log("[DEBUG] 滚动容器 getBoundingClientRect:", {
-      left: containerRect.left,
-      top: containerRect.top,
-      width: containerRect.width,
-      height: containerRect.height
-    });
-    console.log("[DEBUG] 滚动容器 scrollTop:", scrollContainer.scrollTop);
-    console.log("[DEBUG] 滚动容器 scrollLeft:", scrollContainer.scrollLeft);
-    
-    const result = {
-      left: rect.left + scrollContainer.scrollLeft - containerRect.left,
-      top: rect.top + scrollContainer.scrollTop - containerRect.top,
-      width: rect.width,
-      height: rect.height,
-      scrollContainer: 'element',
-      scrollTop: scrollContainer.scrollTop,
-      clientTop: containerRect.top,
-      containerId: scrollContainer.id || '',
-      containerClass: scrollContainer.className || '',
-      containerTag: scrollContainer.tagName
-    };
-    console.log("[DEBUG] 使用元素滚动容器，结果:", result);
-    return result;
-  }
-}
-
-// ========== 滚动到指定位置 ==========
-async function scrollToPosition(scrollContainer, targetScrollTop) {
-  console.log("[DEBUG] scrollToPosition 被调用, targetScrollTop:", targetScrollTop);
-  console.log("[DEBUG] scrollContainer 类型:", scrollContainer);
-  
-  return new Promise((resolve) => {
-    if (scrollContainer === 'window' || scrollContainer === window) {
-      console.log("[DEBUG] 滚动 window 到:", targetScrollTop);
-      window.scrollTo({
-        top: targetScrollTop,
-        behavior: 'instant'
-      });
-      console.log("[DEBUG] window 滚动后 scrollY:", window.scrollY);
-    } else {
-      // 通过选择器找到容器
-      let container = null;
-      if (scrollContainer.id) {
-        container = document.getElementById(scrollContainer.id);
-        console.log("[DEBUG] 通过 ID 查找容器:", scrollContainer.id, "找到:", !!container);
-      } else if (scrollContainer.className) {
-        const className = scrollContainer.className.split(' ')[0];
-        container = document.querySelector('.' + className);
-        console.log("[DEBUG] 通过 class 查找容器:", className, "找到:", !!container);
-      } else if (scrollContainer.containerTag) {
-        container = document.querySelector(scrollContainer.containerTag);
-        console.log("[DEBUG] 通过 tag 查找容器:", scrollContainer.containerTag, "找到:", !!container);
-      }
-      
-      if (container) {
-        console.log("[DEBUG] 滚动前 container.scrollTop:", container.scrollTop);
-        container.scrollTop = targetScrollTop;
-        console.log("[DEBUG] 滚动后 container.scrollTop:", container.scrollTop);
-      } else {
-        console.log("[DEBUG] 未找到滚动容器，回退到 window 滚动");
-        window.scrollTo({
-          top: targetScrollTop,
-          behavior: 'instant'
-        });
-      }
-    }
-    setTimeout(() => {
-      console.log("[DEBUG] 滚动完成，等待 100ms");
-      resolve();
-    }, 100);
-  });
-}
-
-// 获取页面固定导航条高度
-// 获取页面固定/粘性元素的总高度
-function getFixedElementsHeight() {
-  let maxBottom = 0;
-  const elements = document.querySelectorAll('*');
-  
-  for (let el of elements) {
-    const style = getComputedStyle(el);
-    if (style.position === 'fixed' || style.position === 'sticky') {
-      const rect = el.getBoundingClientRect();
-      // 检测所有在视口顶部的元素（top <= 200px），高度 < 200px
-      if (rect.top <= 200 && rect.bottom > 0 && rect.height > 0 && rect.height < 200) {
-        maxBottom = Math.max(maxBottom, rect.bottom);
-      }
-    }
-  }
-  
-  if (maxBottom > window.innerHeight / 2) {
-    maxBottom = 0;
-  }
-  
-  console.log("[DEBUG] 固定导航条总高度:", maxBottom);
-  return maxBottom;
+  console.log("发送就绪消息异常:", e);
 }
 
 // 创建高亮遮罩层
 function createHighlightDiv() {
-  console.log("[DEBUG] 创建高亮层");
+  console.log("创建高亮层");
   if (hoverHighlightDiv && hoverHighlightDiv.isConnected) {
-    console.log("[DEBUG] 高亮层已存在");
     return hoverHighlightDiv;
   }
 
@@ -191,25 +40,26 @@ function createHighlightDiv() {
   `;
   document.body.appendChild(div);
   hoverHighlightDiv = div;
-  console.log("[DEBUG] 高亮层创建完成");
   return div;
 }
 
 // 更新高亮位置
-// 更新高亮位置 - 使用视口坐标
 function updateHighlight(element) {
-  if (!hoverHighlightDiv || !element || isMenuOpen) return;
+  if (!hoverHighlightDiv || !element) return;
+  // 即使菜单打开，只要选中了元素就显示高亮
+  if (isMenuOpen && element === selectedElement) {
+    // 菜单打开时仍然显示高亮
+  }
 
-  const rect = element.getBoundingClientRect(); // 这已经是视口坐标
+  const rect = element.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) {
     hoverHighlightDiv.style.display = "none";
     return;
   }
 
   hoverHighlightDiv.style.display = "block";
-  // 直接使用 rect 的坐标，不需要加 scrollX/scrollY
-  hoverHighlightDiv.style.left = rect.left + "px";
-  hoverHighlightDiv.style.top = rect.top + "px";
+  hoverHighlightDiv.style.left = rect.left + window.scrollX + "px";
+  hoverHighlightDiv.style.top = rect.top + window.scrollY + "px";
   hoverHighlightDiv.style.width = rect.width + "px";
   hoverHighlightDiv.style.height = rect.height + "px";
 }
@@ -218,6 +68,24 @@ function updateHighlight(element) {
 function hideHighlight() {
   if (hoverHighlightDiv) {
     hoverHighlightDiv.style.display = "none";
+  }
+}
+
+// 临时隐藏高亮框（用于截图时）
+function temporarilyHideHighlight() {
+  if (hoverHighlightDiv && hoverHighlightDiv.style.display !== "none") {
+    hoverHighlightDiv.setAttribute('data-was-visible', 'true');
+    hoverHighlightDiv.style.display = "none";
+    return true;
+  }
+  return false;
+}
+
+// 恢复高亮框（截图完成后）
+function restoreHighlight() {
+  if (hoverHighlightDiv && hoverHighlightDiv.getAttribute('data-was-visible') === 'true') {
+    hoverHighlightDiv.style.display = "block";
+    hoverHighlightDiv.removeAttribute('data-was-visible');
   }
 }
 
@@ -240,136 +108,58 @@ function dataURLToBlob(dataURL) {
   });
 }
 
-// 元素截图 - 支持自定义滚动容器
+// 元素截图
 async function captureElementAsBlob(element) {
-  console.log("[DEBUG] captureElementAsBlob 被调用");
-  
-  let hiddenElements = [];
-  
   try {
-    //showToast("正在截图，请稍候...", 800);
+    // 临时隐藏高亮框
+    const wasHighlightVisible = temporarilyHideHighlight();
     
-    // 先获取原始位置（用于判断是否需要滚动）
-    const originalRect = element.getBoundingClientRect();
-    const viewportSize = {
-      width: window.innerWidth,
-      height: window.innerHeight
-    };
-    
-    const needScroll = originalRect.bottom > viewportSize.height;
-    console.log("[DEBUG] 原始位置:", originalRect);
-    console.log("[DEBUG] 是否需要滚动:", needScroll);
-    
-    // 隐藏页面上的所有导航条
-    hiddenElements = hideFixedNavigation();
-    await new Promise(resolve => setTimeout(resolve, 50));
-    
-    // 隐藏后重新获取元素位置（用于截图）
-    const viewportRect = element.getBoundingClientRect();
-    console.log("[DEBUG] 隐藏导航条后的位置:", viewportRect);
-    
+    const rect = element.getBoundingClientRect();
     const scrollX = window.scrollX || window.pageXOffset;
     const scrollY = window.scrollY || window.pageYOffset;
     
-    let finalImageData;
+    const elementRect = {
+      left: rect.left + scrollX,
+      top: rect.top + scrollY,
+      right: rect.right + scrollX,
+      bottom: rect.bottom + scrollY,
+      width: rect.width,
+      height: rect.height,
+      viewportHeight: window.innerHeight
+    };
     
-    if (!needScroll) {
-      // 不需要滚动，直接截图
-      console.log("[DEBUG] 元素完全可见，直接截图");
-      
-      const response = await chrome.runtime.sendMessage({
-        action: "captureElement",
-        rect: viewportRect,
-        isFullyVisible: true
-      });
-      
-      if (!response.success) throw new Error(response.error);
-      finalImageData = response.imageData;
-      
-    } else {
-      // 需要滚动分段截图
-      console.log("[DEBUG] 元素需要滚动，使用滚动分段截图");
-      showToast("📸 元素较长，正在分段截图...", 800);
-      await delay(800);
-
-      
-      const elementRect = {
-        left: viewportRect.left + scrollX,
-        top: viewportRect.top + scrollY,
-        width: viewportRect.width,
-        height: viewportRect.height,
-        viewportHeight: viewportSize.height
-      };
-      
-      console.log("[DEBUG] 文档坐标 elementRect:", elementRect);
-      
-      const response = await chrome.runtime.sendMessage({
-        action: "captureElement",
-        rect: viewportRect,
-        elementRect: elementRect,
-        isFullyVisible: false
-      });
-      
-      if (!response.success) throw new Error(response.error);
-      finalImageData = response.imageData;
+    const viewportRect = {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height
+    };
+    
+    const response = await chrome.runtime.sendMessage({
+      action: "captureElement",
+      rect: viewportRect,
+      elementRect: elementRect,
+	  dpr: window.devicePixelRatio || 1
+    });
+    
+    // 恢复高亮框
+    if (wasHighlightVisible) {
+      restoreHighlight();
     }
     
-    const blob = await dataURLToBlob(finalImageData);
-    console.log("[DEBUG] 截图成功，blob 大小:", blob.size);
+    if (!response.success) {
+      throw new Error(response.error);
+    }
+    
+    const blob = await dataURLToBlob(response.imageData);
     return blob;
     
   } catch (error) {
-    console.error("[DEBUG] 截图失败:", error);
+    // 出错时也要恢复高亮框
+    restoreHighlight();
+    console.error("截图失败:", error);
     showToast("截图失败: " + error.message, 2000);
     return null;
-  } finally {
-    restoreFixedNavigation(hiddenElements);
-  }
-}
-
-// 带视口信息的裁剪（处理设备像素比）
-async function cropImageWithViewport(dataUrl, rect, viewportSize) {
-  try {
-    const response = await fetch(dataUrl);
-    const blob = await response.blob();
-    const imageBitmap = await createImageBitmap(blob);
-    
-    const scaleX = imageBitmap.width / viewportSize.width;
-    const scaleY = imageBitmap.height / viewportSize.height;
-    
-    console.log("[DEBUG] 裁剪参数:", { rect, scaleX, scaleY, imageSize: { w: imageBitmap.width, h: imageBitmap.height } });
-    
-    const canvas = new OffscreenCanvas(rect.width, rect.height);
-    const ctx = canvas.getContext("2d");
-    
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    
-    ctx.drawImage(
-      imageBitmap,
-      rect.left * scaleX,
-      rect.top * scaleY,
-      rect.width * scaleX,
-      rect.height * scaleY,
-      0, 0,
-      rect.width, rect.height
-    );
-    
-    const croppedBlob = await canvas.convertToBlob({ 
-      type: "image/png",
-      quality: 1.0
-    });
-    
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error("转换失败"));
-      reader.readAsDataURL(croppedBlob);
-    });
-    
-  } catch (error) {
-    console.error("[DEBUG] 裁剪图片失败:", error);
-    throw error;
   }
 }
 
@@ -384,7 +174,7 @@ async function copyImageToClipboard(blob) {
     showToast("✅ 截图已复制到剪贴板", 1500);
     return true;
   } catch (err) {
-    console.error("[DEBUG] 复制失败:", err);
+    console.error("复制失败:", err);
     showToast("❌ 复制失败，请检查权限", 2000);
     return false;
   }
@@ -450,22 +240,39 @@ function closeMenuAndExit() {
   deactivateSelectionMode();
 }
 
-// 创建操作菜单
+// 获取元素的简单路径描述
+function getElementPath(element) {
+  if (!element || element === document.body || element === document.documentElement) {
+    return null;
+  }
+  
+  const tagName = element.tagName.toLowerCase();
+  if (element.id) {
+    return `${tagName}#${element.id}`;
+  }
+  if (element.className && typeof element.className === 'string') {
+    const classes = element.className.split(' ').slice(0, 2).join('.');
+    if (classes) {
+      return `${tagName}.${classes}`;
+    }
+  }
+  return tagName;
+}
+
 // 创建操作菜单
 function showActionMenu(element, rect) {
-  console.log("[DEBUG] showActionMenu 被调用");
-  
   if (popupMenu && popupMenu.isConnected) {
     popupMenu.remove();
   }
   
+  selectedElement = element; // 存储当前选中的元素
+  
   isMenuOpen = true;
-  hideHighlight();
-
+  // 不要隐藏高亮，保持显示当前选中的元素
+  // hideHighlight(); // 删除这行
+  
   const menu = document.createElement("div");
   menu.id = "element-screenshot-menu";
-  menu.setAttribute('data-plugin-menu', 'true');  // 添加标记
-
   menu.style.cssText = `
     position: fixed;
     background-color: white;
@@ -499,6 +306,33 @@ function showActionMenu(element, rect) {
   }
   menu.style.animation = "fadeIn 0.15s ease";
 
+  // 显示元素路径的提示
+  const pathDiv = document.createElement("div");
+  pathDiv.id = "element-screenshot-path";
+  const updatePathDisplay = () => {
+    const path = getElementPath(selectedElement);
+    if (path) {
+      pathDiv.textContent = `当前: ${path}`;
+      pathDiv.style.display = "block";
+    } else {
+      pathDiv.textContent = `当前: ${selectedElement.tagName.toLowerCase()}`;
+      pathDiv.style.display = "block";
+    }
+  };
+  pathDiv.style.cssText = `
+    padding: 6px 20px;
+    font-size: 11px;
+    color: #64748b;
+    border-bottom: 1px solid #e2e8f0;
+    background-color: #f8fafc;
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  `;
+  updatePathDisplay();
+  menu.appendChild(pathDiv);
+
   // 复制按钮
   const copyBtn = document.createElement("div");
   copyBtn.textContent = "📋 复制截图";
@@ -516,8 +350,12 @@ function showActionMenu(element, rect) {
   copyBtn.onmouseleave = () => (copyBtn.style.backgroundColor = "transparent");
   copyBtn.onclick = async (e) => {
     e.stopPropagation();
-    console.log("[DEBUG] 复制按钮被点击");
-    const blob = await captureElementAsBlob(element);
+    const currentElement = selectedElement;
+    if (!currentElement) {
+      showToast("未选中任何元素", 1500);
+      return;
+    }
+    const blob = await captureElementAsBlob(currentElement);
     if (blob) {
       await copyImageToClipboard(blob);
     }
@@ -532,10 +370,14 @@ function showActionMenu(element, rect) {
   downloadBtn.onmouseleave = () => (downloadBtn.style.backgroundColor = "transparent");
   downloadBtn.onclick = async (e) => {
     e.stopPropagation();
-    console.log("[DEBUG] 下载按钮被点击");
-    const blob = await captureElementAsBlob(element);
+    const currentElement = selectedElement;
+    if (!currentElement) {
+      showToast("未选中任何元素", 1500);
+      return;
+    }
+    const blob = await captureElementAsBlob(currentElement);
     if (blob) {
-      const tagName = element.tagName.toLowerCase();
+      const tagName = currentElement.tagName.toLowerCase();
       const timestamp = Date.now();
       downloadImage(blob, `element_${tagName}_${timestamp}.png`);
     }
@@ -545,7 +387,7 @@ function showActionMenu(element, rect) {
   menu.appendChild(copyBtn);
   menu.appendChild(downloadBtn);
 
-  // 修复：菜单位置直接使用视口坐标，不需要再加 scrollX/scrollY
+  // 菜单位置显示在光标下方
   const mouseX = window.lastClickX || rect.left + rect.width / 2;
   const mouseY = window.lastClickY || rect.top + rect.height / 2;
   
@@ -556,27 +398,28 @@ function showActionMenu(element, rect) {
   const menuHeight = 90;
   const padding = 10;
   
-  // 边界检查使用视口坐标
-  if (left + menuWidth > window.innerWidth) {
+  if (left + menuWidth > window.innerWidth + window.scrollX) {
     left = mouseX - menuWidth - 10;
   }
   
-  if (top + menuHeight > window.innerHeight) {
+  if (top + menuHeight > window.innerHeight + window.scrollY) {
     top = mouseY - menuHeight - 10;
   }
   
-  if (left < 0) {
-    left = padding;
+  if (left < window.scrollX) {
+    left = window.scrollX + padding;
   }
   
-  if (top < 0) {
-    top = padding;
+  if (top < window.scrollY) {
+    top = window.scrollY + padding;
   }
   
   menu.style.left = left + "px";
   menu.style.top = top + "px";
-  
-  console.log("[DEBUG] 菜单位置（视口坐标）:", { left, top });
+
+  // 存储菜单和更新函数
+  window.currentMenu = menu;
+  window.updatePathDisplay = updatePathDisplay;
 
   document.body.appendChild(menu);
   popupMenu = menu;
@@ -586,6 +429,9 @@ function showActionMenu(element, rect) {
       menu.remove();
       popupMenu = null;
       isMenuOpen = false;
+      selectedElement = null;
+      window.currentMenu = null;
+      window.updatePathDisplay = null;
       document.removeEventListener("click", closeHandler);
       document.removeEventListener("contextmenu", closeHandler);
       deactivateSelectionMode();
@@ -598,6 +444,31 @@ function showActionMenu(element, rect) {
   }, 10);
 }
 
+// 选择父元素
+function selectParentElement() {
+  if (!selectedElement || !selectionModeActive) return;
+  
+  const parentElement = selectedElement.parentElement;
+  if (!parentElement || parentElement === document.body || parentElement === document.documentElement) {
+    showToast("已经是顶层元素，无法继续向上选择", 1000);
+    return;
+  }
+  
+  // 更新选中的元素
+  selectedElement = parentElement;
+  currentHoverElement = parentElement;
+  
+  // 更新高亮显示
+  updateHighlight(parentElement);
+  
+  // 更新菜单中的元素路径显示
+  if (window.updatePathDisplay) {
+    window.updatePathDisplay();
+  }
+  
+  showToast(`↑ 已选择上层元素: ${getElementPath(parentElement) || parentElement.tagName.toLowerCase()}`, 800);
+}
+
 // 鼠标移动处理
 function onMouseMove(e) {
   if (!selectionModeActive || isMenuOpen) return;
@@ -608,11 +479,11 @@ function onMouseMove(e) {
       elem.id !== "element-screenshot-menu" &&
       !elem.closest("#element-screenshot-menu")) {
     currentHoverElement = elem;
+    selectedElement = elem;
     updateHighlight(elem);
   }
 }
 
-// 点击处理
 // 点击处理
 function onClickHandler(e) {
   if (!selectionModeActive) return;
@@ -628,48 +499,60 @@ function onClickHandler(e) {
   e.preventDefault();
   e.stopPropagation();
   
-  // 修复：直接存储视口坐标（clientX/clientY），而不是文档坐标
-  window.lastClickX = e.clientX;
-  window.lastClickY = e.clientY;
-  console.log("[DEBUG] 点击位置（视口坐标）:", { x: window.lastClickX, y: window.lastClickY });
+  // 记录鼠标点击位置
+  window.lastClickX = e.clientX + window.scrollX;
+  window.lastClickY = e.clientY + window.scrollY;
 
   const targetElement = e.target;
-  console.log("[DEBUG] 点击元素:", targetElement.tagName, targetElement.className, targetElement.id);
-  
   if (targetElement && targetElement !== hoverHighlightDiv) {
     const rect = targetElement.getBoundingClientRect();
-    console.log("[DEBUG] 点击元素位置（视口坐标）:", rect);
     showActionMenu(targetElement, rect);
   }
 }
 
 // 键盘处理
 function onKeyDown(e) {
-  if (selectionModeActive && e.key === "Escape") {
-    console.log("[DEBUG] ESC 键被按下");
-    if (isMenuOpen) {
-      if (popupMenu && popupMenu.isConnected) {
-        popupMenu.remove();
-        popupMenu = null;
+  if (selectionModeActive) {
+    // 上键选择父元素
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      selectParentElement();
+      return;
+    }
+    
+    // ESC 退出
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (isMenuOpen) {
+        if (popupMenu && popupMenu.isConnected) {
+          popupMenu.remove();
+          popupMenu = null;
+        }
+        isMenuOpen = false;
+        selectedElement = null;
+        window.currentMenu = null;
+        window.updatePathDisplay = null;
+        hideHighlight();
+      } else {
+        deactivateSelectionMode();
+        showToast("已退出选择模式", 1000);
       }
-      isMenuOpen = false;
-    } else {
-      deactivateSelectionMode();
-      showToast("已退出选择模式", 1000);
     }
   }
 }
 
 // 激活选择模式
 function activateSelectionMode() {
-  console.log("=== [DEBUG] activateSelectionMode 被调用 ===");
+  console.log("=== activateSelectionMode 被调用 ===");
   if (selectionModeActive) {
-    console.log("[DEBUG] 选择模式已激活，跳过");
+    console.log("选择模式已激活，跳过");
     return;
   }
   
   selectionModeActive = true;
   isMenuOpen = false;
+  selectedElement = null;
   createHighlightDiv();
   
   document.addEventListener("mousemove", onMouseMove);
@@ -677,24 +560,24 @@ function activateSelectionMode() {
   document.addEventListener("keydown", onKeyDown);
   
   document.body.style.cursor = "crosshair";
-  console.log("[DEBUG] 鼠标样式已改为 crosshair");
   
   chrome.runtime.sendMessage({ 
     action: "selectionModeStatus", 
     active: true 
-  }).catch(err => console.log("[DEBUG] 发送状态失败:", err));
+  }).catch(err => console.log("发送状态失败:", err));
   
-  showToast("🔍 选择模式已开启，点击元素截图（ESC退出）", 2000);
-  console.log("[DEBUG] 选择模式已激活，selectionModeActive =", selectionModeActive);
+  showToast("🔍 选择模式已开启，点击元素截图 | ↑ 键选择父元素 | ESC 退出", 2500);
+  console.log("选择模式已激活，鼠标样式已更改");
 }
 
 // 退出选择模式
 function deactivateSelectionMode() {
-  console.log("[DEBUG] deactivateSelectionMode 被调用");
+  console.log("deactivateSelectionMode 被调用");
   if (!selectionModeActive) return;
   
   selectionModeActive = false;
   isMenuOpen = false;
+  selectedElement = null;
   
   document.removeEventListener("mousemove", onMouseMove);
   document.removeEventListener("click", onClickHandler, true);
@@ -705,7 +588,7 @@ function deactivateSelectionMode() {
   chrome.runtime.sendMessage({ 
     action: "selectionModeStatus", 
     active: false 
-  }).catch(err => console.log("[DEBUG] 发送状态失败:", err));
+  }).catch(err => console.log("发送状态失败:", err));
   
   hideHighlight();
   
@@ -720,21 +603,23 @@ function deactivateSelectionMode() {
   }
   
   currentHoverElement = null;
-  console.log("[DEBUG] 选择模式已退出");
+  window.currentMenu = null;
+  window.updatePathDisplay = null;
+  console.log("选择模式已退出");
 }
 
 // 监听来自 background 的消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("[DEBUG] content script 收到消息:", message);
+  console.log("content script 收到消息:", message);
   
   if (message.action === "ping") {
-    console.log("[DEBUG] 收到 ping，返回 pong");
+    console.log("收到 ping，返回 pong");
     sendResponse({ pong: true });
     return true;
   }
   
   if (message.action === "toggleSelectionMode") {
-    console.log("[DEBUG] 收到 toggleSelectionMode 消息，当前状态:", selectionModeActive);
+    console.log("收到 toggleSelectionMode 消息，当前状态:", selectionModeActive);
     if (selectionModeActive) {
       deactivateSelectionMode();
       showToast("已退出选择模式", 1000);
@@ -743,118 +628,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({ status: selectionModeActive ? "active" : "inactive" });
   }
-  
-  // 处理滚动请求
-  if (message.action === "scrollTo") {
-    console.log("[DEBUG] 收到 scrollTo 请求:", message);
-    scrollToPosition(message.scrollContainer, message.targetScrollTop).then(() => {
-      sendResponse({ success: true });
-    });
-    return true;
-  }
-  
   return true;
 });
 
 // 页面卸载时清理
 window.addEventListener("beforeunload", () => {
-  console.log("[DEBUG] 页面卸载，清理选择模式");
   deactivateSelectionMode();
 });
 
-console.log("=== [DEBUG] 元素截图工具 content script 加载完成，等待消息 ===");
-console.log("[DEBUG] 当前页面可滚动容器检测...");
-// 检测页面中所有可滚动元素
-const allElements = document.querySelectorAll('*');
-let scrollableCount = 0;
-allElements.forEach(el => {
-  const style = getComputedStyle(el);
-  const overflow = style.overflow + style.overflowY + style.overflowX;
-  if (/(auto|scroll)/.test(overflow)) {
-    scrollableCount++;
-    console.log(`[DEBUG] 发现可滚动元素: ${el.tagName}`, { 
-      id: el.id, 
-      class: el.className,
-      overflow: overflow
-    });
-  }
-});
-console.log(`[DEBUG] 页面中共发现 ${scrollableCount} 个可滚动元素`);
-
-
-// 隐藏所有导航条（通过 class 选择器
-function hideFixedNavigation() {
-  const hiddenElements = [];
-  
-  const selectors = [
-    'header.sticky',
-    'nav.cadaPl',
-    '.navigation',
-    '.tabsNavigation',
-    '[data-position="fixed"]',
-    '.sticky',
-    '.fixedHeader'
-    ];
-  
-  for (let selector of selectors) {
-    const elements = document.querySelectorAll(selector);
-    for (let el of elements) {
-      if (el.style.display !== 'none') {
-        const originalDisplay = el.style.display;
-        const originalVisibility = el.style.visibility;
-        
-        el.style.display = 'none';
-        //el.style.visibility = 'hidden';
-        el.style.border = 'none';
-        
-        console.log("[DEBUG] 保存:", el.className, "display:", originalDisplay, "visibility:", originalVisibility);
-        
-        hiddenElements.push({
-          element: el,
-          originalDisplay: originalDisplay,
-          originalVisibility: originalVisibility
-        });
-        
-        console.log("[DEBUG] 隐藏:", selector, el.tagName, el.className);
-      }
-    }
-  }
-  
-  console.log("[DEBUG] 共隐藏", hiddenElements.length, "个导航元素");
-  return hiddenElements;
-}
-
-
-// 恢复导航条
-function restoreFixedNavigation(hiddenElements) {
-  for (let item of hiddenElements) {
-    // 恢复 display
-    if (item.originalDisplay === "") {
-      item.element.style.removeProperty('display');
-    } else {
-      item.element.style.display = item.originalDisplay;
-    }
-    
-    // 恢复 visibility
-    /*
-    if (item.originalVisibility === "") {
-      item.element.style.removeProperty('visibility');
-    } else {
-      item.element.style.visibility = item.originalVisibility;
-    }*/
-  }
-  console.log("[DEBUG] 已恢复", hiddenElements.length, "个导航元素");
-}
-
-
-// 恢复隐藏的导航条
-function restoreFixedNavigation(hiddenElements) {
-  for (let item of hiddenElements) {
-    item.element.style.display = item.originalDisplay;
-  }
-  console.log("[DEBUG] 已恢复", hiddenElements.length, "个导航条");
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+console.log("=== 元素截图工具 content script 加载完成，等待消息 ===");
