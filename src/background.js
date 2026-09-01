@@ -343,6 +343,7 @@ async function captureScrollingElement(tabId, elementRect, windowId, viewportSiz
     const elementHeight = elementRect.height;
     const viewportHeight = elementRect.viewportHeight || viewportSize.height;
     const elementStart = elementRect.top;
+	console.log("viewportHeight:",viewportHeight, "elementHeight:",elementHeight);
 
     const segments = Math.ceil(elementHeight / viewportHeight);
     const segmentHeight = Math.trunc(elementHeight / segments);
@@ -356,16 +357,25 @@ async function captureScrollingElement(tabId, elementRect, windowId, viewportSiz
 
       const scrollY = elementStart + (i * segmentHeight);
 
-      await chrome.scripting.executeScript({
+      const result = await chrome.scripting.executeScript({
         target: { tabId: tabId },
         func: (scrollY) => {
           window.scrollTo({
             top: scrollY,
             behavior: 'instant'
           });
+		  return window.scrollY;
         },
         args: [scrollY]
       });
+	  // result[0].result 就是网页真实 scrollY
+	  const webScrollY = result[0].result;
+	  let cropTop = 0;
+	  // 撞底时，剪裁的顶部应该下移期望滚动到位置和实际滚动到位置的偏移量
+	  if (webScrollY < scrollY){
+		  cropTop = scrollY - webScrollY;
+	  }
+	  console.log("webScrollY:",webScrollY, "cropTop:",cropTop);
 
       await delay(200);
 
@@ -379,7 +389,7 @@ async function captureScrollingElement(tabId, elementRect, windowId, viewportSiz
 
       const cropRect = {
         left: Math.round(elementRect.left),
-        top: 0,
+        top: cropTop,
         width: Math.round(elementRect.width),
         height: Math.round(currentHeight)
       };
