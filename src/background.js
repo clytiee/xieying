@@ -139,6 +139,7 @@ async function showUIElements(tabId) {
 
 /* v1.3 20260831 */
 // =====新增：临时隐藏 .header-wrap sticky头部=====
+/*
 async function hideStickyHeader(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -186,8 +187,141 @@ async function restoreStickyHeader(tabId) {
     console.log("restoreStickyHeader 异常", e);
   }
 }
+*/
+/* v1.2 end */
+/* v1.3 增强：支持 .header-wrap + 掘金 layout-header / banner-wrap */
+async function hideStickyHeader(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // 需要隐藏的头部选择器列表，后续可以继续加
+        const selectors = [
+          //'.header-wrap',	//汉典
+		  //'.AppHeader', 	//知乎
+		  //'.ContentItem-actions',	//知乎
+		  //'#toolbarBox',	//CSDN
+		  //'.fixedWrapper',	//百度百科
+          //'.layout-header',	//掘金主导航header
+          //'.banner-wrap'	//掘金顶部topbanner广告条
+        ];
+        const results = [];
+        selectors.forEach(sel => {
+          const el = document.querySelector(sel);
+          if (!el) return;
+          //保存原始样式到dataset
+          const original = {
+            visibility: el.style.visibility,
+            position: el.style.position
+          };
+          el.dataset._origVisibility = original.visibility;
+          el.dataset._origPosition = original.position;
+          //visibility:hidden 保留占位，不破坏页面滚动布局
+          el.style.visibility = 'hidden';
+          results.push({ sel, exist:true });
+        });
+        return results;
+      }
+    });
+  } catch (e) {
+    console.log("hideStickyHeader 异常", e);
+  }
+}
 
+async function restoreStickyHeader(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        const selectors = [
+          //'.header-wrap',	//汉典
+		  //'.AppHeader', 	//知乎
+		  //'.ContentItem-actions',	//知乎
+		  //'#toolbarBox',	//CSDN
+		  //'.fixedWrapper',	//百度百科
+          //'.layout-header',	//掘金主导航header
+          //'.banner-wrap'	//掘金顶部topbanner广告条
+        ];
+        selectors.forEach(sel => {
+          const el = document.querySelector(sel);
+          if (!el) return;
+          //恢复原有样式
+          if (el.dataset._origVisibility !== undefined) {
+            el.style.visibility = el.dataset._origVisibility;
+          }
+          if (el.dataset._origPosition !== undefined) {
+            el.style.position = el.dataset._origPosition;
+          }
+          //清理标记
+          delete el.dataset._origVisibility;
+          delete el.dataset._origPosition;
+        });
+      }
+    });
+  } catch (e) {
+    console.log("restoreStickyHeader 异常", e);
+  }
+}
 /* v1.3 end */
+
+/* v1.0.2 begin 20260902 */
+/**
+ * background调用：隐藏页面所有 position:fixed / sticky 元素
+ * @param {number} tabId
+ * @returns {Promise<{success:boolean, count:number}>} 返回处理元素数量
+ */
+async function hideAllFixedSticky(tabId) {
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        const modifiedCount = 0;
+        const all = Array.from(document.querySelectorAll('*'));
+        let cnt = 0;
+        for (const el of all) {
+          const st = getComputedStyle(el);
+          const pos = st.position;
+          if (pos !== 'fixed' && pos !== 'sticky') continue;
+          if (st.display === 'none' || st.visibility === 'hidden') continue;
+
+          // 将原始样式存入dataset，用于恢复
+          el.dataset._origVis = el.style.visibility;
+          el.style.visibility = 'hidden';
+          cnt += 1;
+        }
+        return { success: true, modifiedCount: cnt };
+      }
+    });
+    return res.result;
+  } catch (err) {
+    console.error("hideAllFixedSticky error:", err);
+    return { success: false, modifiedCount: 0 };
+  }
+}
+
+/**
+ * background调用：恢复页面之前被隐藏 fixed/sticky 元素
+ * @param {number} tabId
+ */
+async function restoreAllFixedSticky(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        const all = Array.from(document.querySelectorAll('*'));
+        for (const el of all) {
+          if (typeof el.dataset._origVis !== 'undefined') {
+            el.style.visibility = el.dataset._origVis;
+            delete el.dataset._origVis;
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.error("restoreAllFixedSticky error:", err);
+  }
+}
+/* v1.0.2 end */
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -203,7 +337,8 @@ async function captureElementWithChromeAPI(tab, viewportRect, elementRect) {
     await hideUIElements(tab.id);
 //    await delay(50);
 // =========新增：截图前隐藏 sticky header-wrap=========
-    await hideStickyHeader(tab.id);
+    //await hideStickyHeader(tab.id);
+	await hideAllFixedSticky(tab.id);
     await delay(80); // 给一点渲染时间
     
     const scrollPosition = await getScrollPosition(tab.id);
@@ -225,14 +360,16 @@ async function captureElementWithChromeAPI(tab, viewportRect, elementRect) {
     } finally {
       await restoreScrollPosition(tab.id, scrollPosition);
 // =========新增：恢复sticky头部，在showUIElements之前=========
-      await restoreStickyHeader(tab.id); 
+      //await restoreStickyHeader(tab.id); 
+	  await restoreAllFixedSticky(tab.id);
       await showUIElements(tab.id);
     }
     
   } catch (error) {
     console.error("截图失败:", error);
  // 异常分支也要保证恢复头部！防止页面永久看不见头部
-    await restoreStickyHeader(tab.id);
+    //await restoreStickyHeader(tab.id);
+	await restoreAllFixedSticky(tab.id);
 	await showUIElements(tab.id);
     throw error;
   }
@@ -368,6 +505,12 @@ async function captureScrollingElement(tabId, elementRect, windowId, viewportSiz
         },
         args: [scrollY]
       });
+
+      //隐藏固定栏
+      await delay(250); // 给一点渲染时间
+	  //await hideStickyHeader(tabId);
+	  await hideAllFixedSticky(tabId);
+
 	  // result[0].result 就是网页真实 scrollY
 	  const webScrollY = result[0].result;
 	  let cropTop = 0;

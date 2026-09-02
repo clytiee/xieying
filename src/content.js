@@ -566,7 +566,7 @@ function activateSelectionMode() {
     active: true 
   }).catch(err => console.log("发送状态失败:", err));
   
-  showToast("🔍 选择模式已开启，点击元素截图 | ↑ 键选择父元素 | ESC 退出", 2500);
+  showToast("🔍 选择模式已开启，点击元素截图 | ↑ 键选择上级元素 | ESC 退出", 1500);
   console.log("选择模式已激活，鼠标样式已更改");
 }
 
