@@ -5,16 +5,15 @@ let currentHoverElement = null;
 let popupMenu = null;
 let isMenuOpen = false;
 let selectedElement = null; // 存储当前选中的元素
-
 console.log("=== 元素截图工具 content script 开始加载 ===");
 
 // 通知 background script 脚本已就绪
 try {
-  chrome.runtime.sendMessage({ 
-    action: "contentScriptReady", 
-    ready: true 
+  chrome.runtime.sendMessage({
+    action: "contentScriptReady",
+    ready: true
   }).catch(err => console.log("发送就绪消息失败:", err));
-} catch(e) {
+} catch (e) {
   console.log("发送就绪消息异常:", e);
 }
 
@@ -24,7 +23,6 @@ function createHighlightDiv() {
   if (hoverHighlightDiv && hoverHighlightDiv.isConnected) {
     return hoverHighlightDiv;
   }
-
   const div = document.createElement("div");
   div.id = "element-screenshot-highlight";
   div.style.cssText = `
@@ -43,23 +41,21 @@ function createHighlightDiv() {
   return div;
 }
 
-// 更新高亮位置
+// 更新高亮位置【修复：fixed直接使用视口坐标，不再叠加scrollX/Y】
 function updateHighlight(element) {
   if (!hoverHighlightDiv || !element) return;
   // 即使菜单打开，只要选中了元素就显示高亮
   if (isMenuOpen && element === selectedElement) {
     // 菜单打开时仍然显示高亮
   }
-
   const rect = element.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) {
     hoverHighlightDiv.style.display = "none";
     return;
   }
-
   hoverHighlightDiv.style.display = "block";
-  hoverHighlightDiv.style.left = rect.left + window.scrollX + "px";
-  hoverHighlightDiv.style.top = rect.top + window.scrollY + "px";
+  hoverHighlightDiv.style.left = rect.left + "px";
+  hoverHighlightDiv.style.top = rect.top + "px";
   hoverHighlightDiv.style.width = rect.width + "px";
   hoverHighlightDiv.style.height = rect.height + "px";
 }
@@ -113,11 +109,11 @@ async function captureElementAsBlob(element) {
   try {
     // 临时隐藏高亮框
     const wasHighlightVisible = temporarilyHideHighlight();
-    
+
     const rect = element.getBoundingClientRect();
     const scrollX = window.scrollX || window.pageXOffset;
     const scrollY = window.scrollY || window.pageYOffset;
-    
+
     const elementRect = {
       left: rect.left + scrollX,
       top: rect.top + scrollY,
@@ -127,33 +123,33 @@ async function captureElementAsBlob(element) {
       height: rect.height,
       viewportHeight: window.innerHeight
     };
-    
+
     const viewportRect = {
       left: rect.left,
       top: rect.top,
       width: rect.width,
       height: rect.height
     };
-    
+
     const response = await chrome.runtime.sendMessage({
       action: "captureElement",
       rect: viewportRect,
       elementRect: elementRect,
-	  dpr: window.devicePixelRatio || 1
+      dpr: window.devicePixelRatio || 1
     });
-    
+
     // 恢复高亮框
     if (wasHighlightVisible) {
       restoreHighlight();
     }
-    
+
     if (!response.success) {
       throw new Error(response.error);
     }
-    
+
     const blob = await dataURLToBlob(response.imageData);
     return blob;
-    
+
   } catch (error) {
     // 出错时也要恢复高亮框
     restoreHighlight();
@@ -201,7 +197,6 @@ function showToast(message, duration = 1500) {
     existingToast.remove();
     if (toastTimeout) clearTimeout(toastTimeout);
   }
-
   const toast = document.createElement("div");
   toast.id = "element-screenshot-toast";
   toast.textContent = message;
@@ -223,7 +218,6 @@ function showToast(message, duration = 1500) {
     pointer-events: none;
   `;
   document.body.appendChild(toast);
-
   toastTimeout = setTimeout(() => {
     if (toast && toast.isConnected) toast.remove();
     toastTimeout = null;
@@ -245,7 +239,7 @@ function getElementPath(element) {
   if (!element || element === document.body || element === document.documentElement) {
     return null;
   }
-  
+
   const tagName = element.tagName.toLowerCase();
   if (element.id) {
     return `${tagName}#${element.id}`;
@@ -264,13 +258,11 @@ function showActionMenu(element, rect) {
   if (popupMenu && popupMenu.isConnected) {
     popupMenu.remove();
   }
-  
+
   selectedElement = element; // 存储当前选中的元素
-  
+
   isMenuOpen = true;
-  // 不要隐藏高亮，保持显示当前选中的元素
-  // hideHighlight(); // 删除这行
-  
+
   const menu = document.createElement("div");
   menu.id = "element-screenshot-menu";
   menu.style.cssText = `
@@ -286,7 +278,6 @@ function showActionMenu(element, rect) {
     border: 1px solid #e2e8f0;
     overflow: hidden;
   `;
-
   if (!document.querySelector('#screenshot-menu-style')) {
     const style = document.createElement('style');
     style.id = 'screenshot-menu-style';
@@ -305,7 +296,6 @@ function showActionMenu(element, rect) {
     document.head.appendChild(style);
   }
   menu.style.animation = "fadeIn 0.15s ease";
-
   // 显示元素路径的提示
   const pathDiv = document.createElement("div");
   pathDiv.id = "element-screenshot-path";
@@ -332,7 +322,6 @@ function showActionMenu(element, rect) {
   `;
   updatePathDisplay();
   menu.appendChild(pathDiv);
-
   // 复制按钮
   const copyBtn = document.createElement("div");
   copyBtn.textContent = "📋 复制截图";
@@ -361,7 +350,6 @@ function showActionMenu(element, rect) {
     }
     closeMenuAndExit();
   };
-
   // 下载按钮
   const downloadBtn = document.createElement("div");
   downloadBtn.textContent = "⬇️ 下载截图";
@@ -383,47 +371,42 @@ function showActionMenu(element, rect) {
     }
     closeMenuAndExit();
   };
-
   menu.appendChild(copyBtn);
   menu.appendChild(downloadBtn);
-
   // 菜单位置显示在光标下方
   const mouseX = window.lastClickX || rect.left + rect.width / 2;
   const mouseY = window.lastClickY || rect.top + rect.height / 2;
-  
+
   let left = mouseX + 10;
   let top = mouseY + 10;
-  
+
   const menuWidth = 140;
   const menuHeight = 90;
   const padding = 10;
-  
-  if (left + menuWidth > window.innerWidth + window.scrollX) {
+
+  if (left + menuWidth > window.innerWidth) {
     left = mouseX - menuWidth - 10;
   }
-  
-  if (top + menuHeight > window.innerHeight + window.scrollY) {
+
+  if (top + menuHeight > window.innerHeight) {
     top = mouseY - menuHeight - 10;
   }
-  
-  if (left < window.scrollX) {
-    left = window.scrollX + padding;
+
+  if (left < 0) {
+    left = padding;
   }
-  
-  if (top < window.scrollY) {
-    top = window.scrollY + padding;
+
+  if (top < 0) {
+    top = padding;
   }
-  
+
   menu.style.left = left + "px";
   menu.style.top = top + "px";
-
   // 存储菜单和更新函数
   window.currentMenu = menu;
   window.updatePathDisplay = updatePathDisplay;
-
   document.body.appendChild(menu);
   popupMenu = menu;
-
   const closeHandler = (e) => {
     if (menu && menu.isConnected && !menu.contains(e.target)) {
       menu.remove();
@@ -437,7 +420,7 @@ function showActionMenu(element, rect) {
       deactivateSelectionMode();
     }
   };
-  
+
   setTimeout(() => {
     document.addEventListener("click", closeHandler);
     document.addEventListener("contextmenu", closeHandler);
@@ -447,62 +430,68 @@ function showActionMenu(element, rect) {
 // 选择父元素
 function selectParentElement() {
   if (!selectedElement || !selectionModeActive) return;
-  
+
   const parentElement = selectedElement.parentElement;
   if (!parentElement || parentElement === document.body || parentElement === document.documentElement) {
     showToast("已经是顶层元素，无法继续向上选择", 1000);
     return;
   }
-  
+
   // 更新选中的元素
   selectedElement = parentElement;
   currentHoverElement = parentElement;
-  
+
   // 更新高亮显示
   updateHighlight(parentElement);
-  
+
   // 更新菜单中的元素路径显示
   if (window.updatePathDisplay) {
     window.updatePathDisplay();
   }
-  
+
   showToast(`↑ 已选择上层元素: ${getElementPath(parentElement) || parentElement.tagName.toLowerCase()}`, 800);
 }
 
 // 鼠标移动处理
 function onMouseMove(e) {
   if (!selectionModeActive || isMenuOpen) return;
-  
+
   const elem = document.elementFromPoint(e.clientX, e.clientY);
-  if (elem && elem !== currentHoverElement && 
-      elem.id !== "element-screenshot-highlight" && 
-      elem.id !== "element-screenshot-menu" &&
-      !elem.closest("#element-screenshot-menu")) {
+  if (elem && elem !== currentHoverElement &&
+    elem.id !== "element-screenshot-highlight" &&
+    elem.id !== "element-screenshot-menu" &&
+    !elem.closest("#element-screenshot-menu")) {
     currentHoverElement = elem;
     selectedElement = elem;
     updateHighlight(elem);
   }
 }
 
+// 页面滚动处理：滚动时刷新高亮位置
+function onPageScroll() {
+  if (!selectionModeActive) return;
+  if (currentHoverElement) {
+    updateHighlight(currentHoverElement);
+  }
+}
+
 // 点击处理
 function onClickHandler(e) {
   if (!selectionModeActive) return;
-  
+
   if (isMenuOpen) {
     return;
   }
-  
+
   if (popupMenu && popupMenu.contains(e.target)) {
     return;
   }
-
   e.preventDefault();
   e.stopPropagation();
-  
-  // 记录鼠标点击位置
-  window.lastClickX = e.clientX + window.scrollX;
-  window.lastClickY = e.clientY + window.scrollY;
 
+  //【修复】fixed菜单只保存视口坐标clientX/clientY，不再叠加scrollX/Y
+  window.lastClickX = e.clientX;
+  window.lastClickY = e.clientY;
   const targetElement = e.target;
   if (targetElement && targetElement !== hoverHighlightDiv) {
     const rect = targetElement.getBoundingClientRect();
@@ -520,7 +509,7 @@ function onKeyDown(e) {
       selectParentElement();
       return;
     }
-    
+
     // ESC 退出
     if (e.key === "Escape") {
       e.preventDefault();
@@ -549,23 +538,24 @@ function activateSelectionMode() {
     console.log("选择模式已激活，跳过");
     return;
   }
-  
+
   selectionModeActive = true;
   isMenuOpen = false;
   selectedElement = null;
   createHighlightDiv();
-  
+
   document.addEventListener("mousemove", onMouseMove);
   document.addEventListener("click", onClickHandler, true);
   document.addEventListener("keydown", onKeyDown);
-  
+  window.addEventListener("scroll", onPageScroll, true); //注册滚动监听
+
   document.body.style.cursor = "crosshair";
-  
-  chrome.runtime.sendMessage({ 
-    action: "selectionModeStatus", 
-    active: true 
+
+  chrome.runtime.sendMessage({
+    action: "selectionModeStatus",
+    active: true
   }).catch(err => console.log("发送状态失败:", err));
-  
+
   showToast("🔍 选择模式已开启，点击元素截图 | ↑ 键选择上级元素 | ESC 退出", 1500);
   console.log("选择模式已激活，鼠标样式已更改");
 }
@@ -574,34 +564,35 @@ function activateSelectionMode() {
 function deactivateSelectionMode() {
   console.log("deactivateSelectionMode 被调用");
   if (!selectionModeActive) return;
-  
+
   selectionModeActive = false;
   isMenuOpen = false;
   selectedElement = null;
-  
+
   document.removeEventListener("mousemove", onMouseMove);
   document.removeEventListener("click", onClickHandler, true);
   document.removeEventListener("keydown", onKeyDown);
-  
+  window.removeEventListener("scroll", onPageScroll, true); //移除滚动监听
+
   document.body.style.cursor = "";
-  
-  chrome.runtime.sendMessage({ 
-    action: "selectionModeStatus", 
-    active: false 
+
+  chrome.runtime.sendMessage({
+    action: "selectionModeStatus",
+    active: false
   }).catch(err => console.log("发送状态失败:", err));
-  
+
   hideHighlight();
-  
+
   if (popupMenu && popupMenu.isConnected) {
     popupMenu.remove();
     popupMenu = null;
   }
-  
+
   if (hoverHighlightDiv && hoverHighlightDiv.isConnected) {
     hoverHighlightDiv.remove();
     hoverHighlightDiv = null;
   }
-  
+
   currentHoverElement = null;
   window.currentMenu = null;
   window.updatePathDisplay = null;
@@ -611,13 +602,13 @@ function deactivateSelectionMode() {
 // 监听来自 background 的消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("content script 收到消息:", message);
-  
+
   if (message.action === "ping") {
     console.log("收到 ping，返回 pong");
     sendResponse({ pong: true });
     return true;
   }
-  
+
   if (message.action === "toggleSelectionMode") {
     console.log("收到 toggleSelectionMode 消息，当前状态:", selectionModeActive);
     if (selectionModeActive) {
@@ -635,5 +626,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 window.addEventListener("beforeunload", () => {
   deactivateSelectionMode();
 });
-
 console.log("=== 元素截图工具 content script 加载完成，等待消息 ===");

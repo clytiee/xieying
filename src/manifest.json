@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Element Screenshot",
-  "version": "1.0.2",
+  "name": "Element Screenshot 元素截图",
+  "version": "1.0.3",
   "description": "One‑click screenshot for webpage element. Auto‑stitch long scroll blocks, auto‑hide sticky/fixed headers, copy or download directly.",
   "permissions": ["activeTab", "scripting", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],
