@@ -1,6 +1,7 @@
 // 后台服务：处理插件图标点击和截图
 let activeTabId = null;
 let isSelecting = false;
+
 // 确保 content script 注入成功
 async function ensureContentScript(tabId) {
   try {
@@ -25,16 +26,17 @@ async function ensureContentScript(tabId) {
     }
   }
 }
+
 chrome.action.onClicked.addListener(async (tab) => {
   console.log("插件图标被点击, tabId:", tab.id);
-  
+
   if (!tab.id) return;
-  
+
   activeTabId = tab.id;
-  
+
   // 确保 content script 已注入
   const ready = await ensureContentScript(tab.id);
-  
+
   if (!ready) {
     console.error("无法与页面通信，请刷新页面后重试");
     chrome.scripting.executeScript({
@@ -45,7 +47,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     });
     return;
   }
-  
+
   try {
     // 发送切换选择模式的消息
     await chrome.tabs.sendMessage(tab.id, { action: "toggleSelectionMode" });
@@ -54,6 +56,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     console.error("发送消息失败:", error);
   }
 });
+
 // 监听来自 content script 的截图请求
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "captureElement") {
@@ -69,13 +72,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true;
   }
-  
+
   if (request.action === "selectionModeStatus") {
     isSelecting = request.active;
     console.log("选择模式状态:", isSelecting);
     sendResponse({ received: true });
   }
-  
+
   if (request.action === "hideUIElements") {
     hideUIElements(sender.tab.id).then(() => {
       sendResponse({ success: true });
@@ -84,7 +87,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
-  
+
   if (request.action === "showUIElements") {
     showUIElements(sender.tab.id).then(() => {
       sendResponse({ success: true });
@@ -93,12 +96,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
-  
+
   if (request.action === "ping") {
     sendResponse({ pong: true });
     return true;
   }
 });
+
 async function hideUIElements(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -106,7 +110,7 @@ async function hideUIElements(tabId) {
       func: () => {
         const menu = document.getElementById("element-screenshot-menu");
         if (menu) menu.style.display = "none";
-        
+
         const highlight = document.getElementById("element-screenshot-highlight");
         if (highlight) highlight.style.display = "none";
       }
@@ -115,6 +119,7 @@ async function hideUIElements(tabId) {
     console.error("隐藏UI元素失败:", error);
   }
 }
+
 async function showUIElements(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -122,7 +127,7 @@ async function showUIElements(tabId) {
       func: () => {
         const menu = document.getElementById("element-screenshot-menu");
         if (menu) menu.style.display = "";
-        
+
         const highlight = document.getElementById("element-screenshot-highlight");
         if (highlight) highlight.style.display = "";
       }
@@ -139,10 +144,10 @@ async function hideStickyHeader(tabId) {
       func: () => {
         const selectors = [
           //'.header-wrap',	//汉典
-		  //'.AppHeader', 	//知乎
-		  //'.ContentItem-actions',	//知乎
-		  //'#toolbarBox',	//CSDN
-		  //'.fixedWrapper',	//百度百科
+          //'.AppHeader', 	//知乎
+          //'.ContentItem-actions',	//知乎
+          //'#toolbarBox',	//CSDN
+          //'.fixedWrapper',	//百度百科
           //'.layout-header',	//掘金主导航header
           //'.banner-wrap'	//掘金顶部topbanner广告条
         ];
@@ -157,7 +162,7 @@ async function hideStickyHeader(tabId) {
           el.dataset._origVisibility = original.visibility;
           el.dataset._origPosition = original.position;
           el.style.visibility = 'hidden';
-          results.push({ sel, exist:true });
+          results.push({ sel, exist: true });
         });
         return results;
       }
@@ -166,6 +171,7 @@ async function hideStickyHeader(tabId) {
     console.log("hideStickyHeader 异常", e);
   }
 }
+
 async function restoreStickyHeader(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -173,10 +179,10 @@ async function restoreStickyHeader(tabId) {
       func: () => {
         const selectors = [
           //'.header-wrap',	//汉典
-		  //'.AppHeader', 	//知乎
-		  //'.ContentItem-actions',	//知乎
-		  //'#toolbarBox',	//CSDN
-		  //'.fixedWrapper',	//百度百科
+          //'.AppHeader', 	//知乎
+          //'.ContentItem-actions',	//知乎
+          //'#toolbarBox',	//CSDN
+          //'.fixedWrapper',	//百度百科
           //'.layout-header',	//掘金主导航header
           //'.banner-wrap'	//掘金顶部topbanner广告条
         ];
@@ -196,6 +202,64 @@ async function restoreStickyHeader(tabId) {
     });
   } catch (e) {
     console.log("restoreStickyHeader 异常", e);
+  }
+}
+
+/**
+ * 开启 MutationObserver，监听截图期间新增 fixed/sticky DOM
+ */
+async function startDomObserver(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // 防止重复创建
+        if (window._elementScreenshotObserver) return;
+
+        const observer = new MutationObserver((mutations) => {
+          for (const mut of mutations) {
+            for (const node of mut.addedNodes) {
+              if (!node.querySelectorAll) continue;
+              const els = node.querySelectorAll('*');
+              for (const el of els) {
+                const st = getComputedStyle(el);
+                if (st.position !== 'fixed' && st.position !== 'sticky') continue;
+                if (el.style.display === 'none' || el.style.visibility === 'hidden') continue;
+                el.dataset._origVis = el.style.visibility;
+                el.style.visibility = 'hidden';
+              }
+            }
+          }
+        });
+
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+
+        window._elementScreenshotObserver = observer;
+      }
+    });
+  } catch (err) {
+    console.error("startDomObserver 异常", err);
+  }
+}
+
+/**
+ * 关闭 MutationObserver，必须成对调用，防止泄露
+ */
+async function stopDomObserver(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        if (!window._elementScreenshotObserver) return;
+        window._elementScreenshotObserver.disconnect();
+        delete window._elementScreenshotObserver;
+      }
+    });
+  } catch (err) {
+    console.error("stopDomObserver 异常", err);
   }
 }
 
@@ -287,23 +351,25 @@ async function restoreAllFixedSticky(tabId) {
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
 async function captureElementWithChromeAPI(tab, viewportRect, elementRect) {
   try {
     const window = await chrome.windows.getCurrent();
     const windowId = window.id;
-    
+
     console.log("使用窗口ID:", windowId);
-    
+
     await hideUIElements(tab.id);
-	await hideAllFixedSticky(tab.id);
+    await startDomObserver(tab.id); // 开启DOM变更监听
+    await hideAllFixedSticky(tab.id);
     await delay(80); // 给一点渲染时间
-    
+
     const scrollPosition = await getScrollPosition(tab.id);
-    
+
     try {
       // 获取当前页面的视口尺寸
       const viewportSize = await getViewportSize(tab.id);
-      
+
       if (elementRect.top >= 0 && elementRect.bottom <= (elementRect.viewportHeight || window.innerHeight)) {
         const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
           format: "png"
@@ -311,22 +377,25 @@ async function captureElementWithChromeAPI(tab, viewportRect, elementRect) {
         // 传递视口尺寸信息
         return await cropImageHighQualityWithViewport(dataUrl, viewportRect, viewportSize);
       }
-      
+
       return await captureScrollingElement(tab.id, elementRect, windowId, viewportSize);
-      
+
     } finally {
       await restoreScrollPosition(tab.id, scrollPosition);
-	  await restoreAllFixedSticky(tab.id);
+      await stopDomObserver(tab.id);      // 关闭DOM监听
+      await restoreAllFixedSticky(tab.id);
       await showUIElements(tab.id);
     }
-    
+
   } catch (error) {
     console.error("截图失败:", error);
-	await restoreAllFixedSticky(tab.id);
-	await showUIElements(tab.id);
+    await stopDomObserver(tab.id); // 异常也要关闭监听
+    await restoreAllFixedSticky(tab.id);
+    await showUIElements(tab.id);
     throw error;
   }
 }
+
 // 获取视口尺寸
 async function getViewportSize(tabId) {
   try {
@@ -343,6 +412,7 @@ async function getViewportSize(tabId) {
     return { width: window.innerWidth, height: window.innerHeight };
   }
 }
+
 // 高质量裁剪（带视口信息）
 async function cropImageHighQualityWithViewport(dataUrl, rect, viewportSize) {
   try {
@@ -385,6 +455,7 @@ async function cropImageHighQualityWithViewport(dataUrl, rect, viewportSize) {
     return cropImageFallback(dataUrl, rect, viewportSize);
   }
 }
+
 async function getScrollPosition(tabId) {
   try {
     const result = await chrome.scripting.executeScript({
@@ -400,6 +471,7 @@ async function getScrollPosition(tabId) {
     return { x: 0, y: 0 };
   }
 }
+
 async function restoreScrollPosition(tabId, position) {
   try {
     await chrome.scripting.executeScript({
@@ -414,12 +486,13 @@ async function restoreScrollPosition(tabId, position) {
     console.error("恢复滚动位置失败:", error);
   }
 }
+
 async function captureScrollingElement(tabId, elementRect, windowId, viewportSize) {
   try {
     const elementHeight = elementRect.height;
     const viewportHeight = elementRect.viewportHeight || viewportSize.height;
     const elementStart = elementRect.top;
-	console.log("viewportHeight:",viewportHeight, "elementHeight:",elementHeight);
+    console.log("viewportHeight:", viewportHeight, "elementHeight:", elementHeight);
     const segments = Math.ceil(elementHeight / viewportHeight);
     const segmentHeight = Math.trunc(elementHeight / segments);
     let fullCanvas = null;
@@ -435,19 +508,19 @@ async function captureScrollingElement(tabId, elementRect, windowId, viewportSiz
             top: scrollY,
             behavior: 'instant'
           });
-		  return window.scrollY;
+          return window.scrollY;
         },
         args: [scrollY]
       });
       //隐藏固定栏
       await delay(250);
-	  await hideAllFixedSticky(tabId);
-	  const webScrollY = result[0].result;
-	  let cropTop = 0;
-	  if (webScrollY < scrollY){
-		  cropTop = scrollY - webScrollY;
-	  }
-	  console.log("webScrollY:",webScrollY, "cropTop:",cropTop);
+      await hideAllFixedSticky(tabId);
+      const webScrollY = result[0].result;
+      let cropTop = 0;
+      if (webScrollY < scrollY) {
+        cropTop = scrollY - webScrollY;
+      }
+      console.log("webScrollY:", webScrollY, "cropTop:", cropTop);
       await delay(200);
       const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
         format: "png",
@@ -499,6 +572,7 @@ async function captureScrollingElement(tabId, elementRect, windowId, viewportSiz
     throw error;
   }
 }
+
 // 带视口信息的裁剪
 async function cropImageWithViewport(dataUrl, rect, viewportSize) {
   try {
@@ -538,38 +612,39 @@ async function cropImageWithViewport(dataUrl, rect, viewportSize) {
     throw error;
   }
 }
+
 // 高质量裁剪图片（修复坐标缩放问题）
 async function cropImageHighQuality(dataUrl, rect) {
   try {
     const response = await fetch(dataUrl);
     const blob = await response.blob();
     const imageBitmap = await createImageBitmap(blob);
-    
+
     // 获取原始图片的实际尺寸
     const originalWidth = imageBitmap.width;
     const originalHeight = imageBitmap.height;
-    
+
     // 获取视口尺寸（截图时页面的实际尺寸）
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
-    
+
     // 计算缩放比例（截图实际尺寸 vs 逻辑尺寸）
     // 通常 captureVisibleTab 返回的是实际像素尺寸，可能受设备像素比影响
     const scaleX = originalWidth / viewportWidth;
     const scaleY = originalHeight / viewportHeight;
-    
+
     console.log("截图尺寸:", originalWidth, "x", originalHeight);
     console.log("视口尺寸:", viewportWidth, "x", viewportHeight);
     console.log("缩放比例:", scaleX, scaleY);
     console.log("裁剪区域:", rect);
-    
+
     // 创建目标 canvas
     const canvas = new OffscreenCanvas(rect.width, rect.height);
     const ctx = canvas.getContext("2d");
-    
+
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    
+
     // 根据缩放比例调整裁剪坐标和尺寸
     ctx.drawImage(
       imageBitmap,
@@ -580,24 +655,25 @@ async function cropImageHighQuality(dataUrl, rect) {
       0, 0,
       rect.width, rect.height
     );
-    
-    const croppedBlob = await canvas.convertToBlob({ 
+
+    const croppedBlob = await canvas.convertToBlob({
       type: "image/png",
       quality: 1.0
     });
-    
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
       reader.onerror = () => reject(new Error("转换失败"));
       reader.readAsDataURL(croppedBlob);
     });
-    
+
   } catch (error) {
     console.error("裁剪图片失败:", error);
     return cropImageFallback(dataUrl, rect, viewportSize);
   }
 }
+
 async function cropImageFallback(dataUrl, rect, viewportSize = null) {
   try {
     const response = await fetch(dataUrl);
@@ -621,7 +697,7 @@ async function cropImageFallback(dataUrl, rect, viewportSize = null) {
     let srcY = rect.top;
     let srcW = rect.width;
     let srcH = rect.height;
-    if(viewportSize){
+    if (viewportSize) {
       const scaleX = imageBitmap.width / viewportSize.width;
       const scaleY = imageBitmap.height / viewportSize.height;
       srcX = rect.left * scaleX;
@@ -649,6 +725,7 @@ async function cropImageFallback(dataUrl, rect, viewportSize = null) {
     throw error;
   }
 }
+
 function dataURLToBlob(dataURL) {
   return new Promise((resolve, reject) => {
     try {
@@ -666,4 +743,5 @@ function dataURLToBlob(dataURL) {
     }
   });
 }
-console.log("Background script loaded");
+
+console.log("Background script loaded, version2 with MutationObserver + blacklist");
